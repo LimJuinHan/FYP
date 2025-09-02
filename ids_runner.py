@@ -208,11 +208,13 @@ def run_ids(interfaces):
                 continue
 
             allowed_ips = {"10.10.3.2", "10.10.4.2"}
-            if src not in allowed_ips or dst not in allowed_ips:
-                continue  # skip this packet            
+            if not (src in allowed_ips or dst in allowed_ips):
+                continue  # skip packets not involving the allowed IPs     
 
             sport = int(getattr(getattr(packet, proto.lower(), None), "srcport", 0) or 0)
             dport = int(getattr(getattr(packet, proto.lower(), None), "dstport", 0) or 0)
+            if sport == 53 or dport == 53:
+                continue 
             flow_id = (src, dst, sport, dport, proto)
             flows[flow_id].append(packet)
 
@@ -261,7 +263,6 @@ def push_alert(flow, score, severity="High"):
         "message": f"Anomalous {proto} flow detected (score={score:.3f})"
     }
     alert_queue.put(alert)
-    print(f"[{severity}] {alert['message']} from {alert['src']} → {alert['dst']}")
 
 def start_ids(interfaces):
     """Start IDS runner in a background thread monitoring the provided interfaces."""

@@ -12,7 +12,6 @@
 <nav class="bg-blue-600 text-white p-4 flex justify-between items-center">
   <div class="text-xl font-bold">NIDS Dashboard</div>
   <div class="space-x-4 flex items-center relative">
-
     <a href="home.html" class="hover:underline">Home</a>
     <a href="dashboard.html" class="hover:underline">Dashboard</a>
     <a href="alerts.html" class="hover:underline">Alerts</a>
@@ -20,7 +19,6 @@
     <!-- Dropdown wrapper -->
     <div class="relative group">
       <a href="#" class="hover:underline">Raw PCAP</a>
-
       <div class="absolute left-0 mt-1 w-40 bg-white text-black rounded shadow-lg opacity-0 group-hover:opacity-100 invisible group-hover:visible transition-opacity duration-300">
         <a href="raw_pcap.html" class="block px-4 py-2 hover:bg-blue-100">View Raw PCAP</a>
         <a href="view_raw_pcap.html" class="block px-4 py-2 hover:bg-blue-100">View PCAP Files</a>
@@ -32,7 +30,7 @@
 </nav>
 
 <!-- Fixed top-right selected interfaces display -->
-<div id="selected-interfaces-display" class="fixed top-16 right-4 p-3 w text-sm text-gray-700">
+<div id="selected-interfaces-display" class="fixed top-16 right-4 p-3 text-sm text-gray-700">
   <span id="selected-ifaces-text" class="italic">None</span>
 </div>
 
@@ -62,7 +60,6 @@
   </div>
 </div>
 
-
 <!-- Interface selection modal -->
 <div class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center hidden" id="interfaceModal">
   <div class="bg-white rounded-lg p-6 w-96">
@@ -75,11 +72,25 @@
   </div>
 </div>
 
+<!-- Phone number modal -->
+<div class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center hidden" id="phoneModal">
+  <div class="bg-white rounded-lg p-6 w-96">
+    <h2 class="text-lg font-bold mb-4">Enter Phone Number</h2>
+    <input id="phoneNumberInput" type="text" placeholder="e.g. 0123456789" 
+           class="w-full p-2 border rounded mb-4">
+    <div class="flex justify-end space-x-2">
+      <button id="cancelPhone" class="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">Cancel</button>
+      <button id="submitPhone" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Submit</button>
+    </div>
+  </div>
+</div>
+
 <!-- Notification container -->
 <div id="notification-container" class="fixed top-32 right-4 space-y-2 z-50"></div>
 
 <script>
 let selectedInterfaces = [];
+let phoneNumber = "";
 
 // Notification system
 function showNotification(message, type="info", duration=3000) {
@@ -119,7 +130,13 @@ const openModalBtn = document.getElementById("openModal");
 const closeModalBtn = document.getElementById("closeModal");
 const saveInterfacesBtn = document.getElementById("saveInterfaces");
 
-// Open modal & fetch interfaces
+// Phone modal logic
+const phoneModal = document.getElementById("phoneModal");
+const phoneInput = document.getElementById("phoneNumberInput");
+const cancelPhoneBtn = document.getElementById("cancelPhone");
+const submitPhoneBtn = document.getElementById("submitPhone");
+
+// Open interface modal
 openModalBtn.addEventListener("click", async () => {
   interfaceModal.classList.remove("hidden");
   interfaceList.innerHTML = "";
@@ -137,7 +154,7 @@ openModalBtn.addEventListener("click", async () => {
   }
 });
 
-// Close modal
+// Close interface modal
 closeModalBtn.addEventListener("click", () => interfaceModal.classList.add("hidden"));
 
 // Save selected interfaces
@@ -169,43 +186,87 @@ saveInterfacesBtn.addEventListener("click", async ()=>{
   }
 });
 
-// Start IDS
-document.getElementById("startIds").addEventListener("click", async () => {
-  if(selectedInterfaces.length === 0){
-    showNotification("Select interfaces before starting IDS","warning");
+//Start IDS with phone modal
+document.getElementById("startIds").addEventListener("click", () => {
+  if (selectedInterfaces.length === 0) {
+    showNotification("Select interfaces before starting IDS", "warning");
     return;
   }
-  showNotification("Starting IDS...", "info", 4000);
+  phoneModal.classList.remove("hidden"); // open phone modal
+});
+
+// Cancel phone modal
+cancelPhoneBtn.addEventListener("click", () => {
+  phoneModal.classList.add("hidden");
+  phoneInput.value = "";
+});
+
+// Submit phone number
+submitPhoneBtn.addEventListener("click", async () => {
+  const num = phoneInput.value.trim();
+  const regex = /^01\d{8,9}$/; // Malaysian numbers: 10–11 digits, start with 01
+
+  if (!regex.test(num)) {
+    showNotification("Invalid Malaysian phone number format", "error");
+    return;
+  }
+
   try {
+    // Save phone and validate
+    const saveResp = await fetch("/save_phone", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone: num })
+    });
+
+    const saveData = await saveResp.json();
+
+    if (saveResp.status !== 200) {
+      showNotification(saveData.message || "Phone number not recognized", "error", 5000);
+      return; // stop here if phone is invalid
+    }
+
+    // Phone verified
+    phoneNumber = num;
+    phoneModal.classList.add("hidden");
+    phoneInput.value = "";
+
+    // Start IDS
+    showNotification("Starting IDS...", "info", 4000);
     const response = await fetch("/start_ids", { method: "POST" });
     const data = await response.json();
-    if(data.status === "IDS started") {
+
+    if (data.status === "IDS started") {
       showNotification("IDS started successfully", "success", 4000);
     } else {
-      showNotification("Failed to start IDS: "+(data.message||"Unknown error"), "warning", 5000);
+      showNotification("Failed to start IDS: " + (data.message || "Unknown error"), "warning", 5000);
     }
-  } catch(err) {
-    showNotification("Error contacting backend: "+err, "error", 5000);
+
+  } catch (err) {
+    showNotification("Error contacting backend: " + err, "error", 5000);
   }
 });
 
 // Start simulation
 document.getElementById("startSimulation").addEventListener("click", async () => {
-  if(selectedInterfaces.length === 0){
+  if (selectedInterfaces.length === 0) {
     showNotification("Select at least one interface before starting", "warning");
     return;
   }
+
   showNotification("Starting simulation...", "info", 5000);
+
   try {
     const response = await fetch("/start_gns3", { method: "POST" });
     const data = await response.json();
-    if(data.status === "Simulation started") {
+
+    if (data.status === "Simulation started") {
       showNotification("Simulation started!", "success", 4000);
     } else {
-      showNotification("Simulation failed: "+(data.message||"Unknown error"), "warning", 5000);
+      showNotification("Simulation failed: " + (data.message || "Unknown error"), "warning", 5000);
     }
-  } catch(err) {
-    showNotification("Error contacting backend: "+err, "error", 5000);
+  } catch (err) {
+    showNotification("Error contacting backend: " + err, "error", 5000);
   }
 });
 

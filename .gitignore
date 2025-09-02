@@ -1,0 +1,18 @@
+# Ignore Python cache
+__pycache__/
+*.pyc
+
+# Ignore captures
+raw_pcap/
+
+# Ignore alerts
+alerts/
+
+# Ignore test artifacts
+test
+
+# Ignore environment files
+.env
+
+#Ignore text files
+*.txt

@@ -90,17 +90,56 @@
 
 <script>
 // ---------------- Notification system ----------------
-function showNotification(message, type="info", duration=3000) {
+let notificationBuffer = [];
+let notificationTimer = null;
+
+// Normalize messages (remove score=... parts)
+function normalizeMessage(msg) {
+  return msg.replace(/\(score=.*?\)/g, "").trim();
+}
+
+function showNotificationSummary() {
+  if (notificationBuffer.length === 0) return;
+
   const container = document.getElementById("notification-container");
   const colors = { info:"bg-blue-500", success:"bg-green-500", warning:"bg-yellow-500", error:"bg-red-500" };
-  const notification = document.createElement("div");
-  notification.className = `text-white ${colors[type]} px-4 py-2 rounded shadow-lg animate-slide-in`;
-  notification.textContent = message;
-  container.appendChild(notification);
-  setTimeout(()=>{
-    notification.classList.add("opacity-0");
-    setTimeout(()=>container.removeChild(notification), 500);
-  }, duration);
+
+  // Count alerts by (normalized message + src→dst)
+  const counts = {};
+  notificationBuffer.forEach(alert => {
+    const cleanMsg = normalizeMessage(alert.message);
+    const src = alert.src.split(":")[0];
+    const dst = alert.dst.split(":")[0];
+    const key = `${cleanMsg} ${src} → ${dst}`;
+    counts[key] = (counts[key] || 0) + 1;
+  });
+
+  // Create one popup per unique alert type & flow
+  Object.entries(counts).forEach(([msg, count]) => {
+    const notification = document.createElement("div");
+    notification.className = `text-white ${colors["warning"]} px-4 py-2 rounded shadow-lg animate-slide-in`;
+    notification.textContent = `New Alerts: ${msg} (x${count})`;
+    container.appendChild(notification);
+
+    setTimeout(()=>{
+      notification.classList.add("opacity-0");
+      setTimeout(()=>container.removeChild(notification), 500);
+    }, 5000);
+  });
+
+  // clear buffer
+  notificationBuffer = [];
+}
+
+// Buffered notification (debounced every 5s)
+function bufferNotification(alert) {
+  notificationBuffer.push(alert);
+  if (!notificationTimer) {
+    notificationTimer = setTimeout(() => {
+      showNotificationSummary();
+      notificationTimer = null;
+    }, 5000);
+  }
 }
 
 // Slide-in animation
@@ -113,12 +152,23 @@ document.head.appendChild(style);
 
 // ---------------- Alerts logic ----------------
 let eventSource = null;
-let allAlerts = [];
+let allAlerts = [];   // aggregated alerts
 let currentPage = 1;
 let rowsPerPage = 25;
 
 const alertsTable = document.getElementById("alertsTable");
 const severityFilter = document.getElementById("severityFilter");
+
+// Helper: create key for deduplication
+// Collapse ports & bucket by message signature
+function makeAlertKey(alert) {
+  // Extract only IPs and generic signature (drop score/ports)
+  const srcIP = alert.src.split(":")[0];
+  const dstIP = alert.dst.split(":")[0];
+  const signature = alert.message.split("(")[0].trim(); // "Anomalous UDP flow detected"
+
+  return `${srcIP}->${dstIP}-${alert.severity}-${signature}`;
+}
 
 // Render alerts with pagination
 function renderAlerts() {
@@ -141,7 +191,7 @@ function renderAlerts() {
       <td class="py-1 px-2">${alert.src}</td>
       <td class="py-1 px-2">${alert.dst}</td>
       <td class="py-1 px-2 font-bold">${alert.severity}</td>
-      <td class="py-1 px-2">${alert.message}</td>
+      <td class="py-1 px-2">${alert.message} <span class="text-gray-600 text-sm">(x${alert.count})</span></td>
     `;
     alertsTable.appendChild(row);
   });
@@ -156,11 +206,23 @@ function startStream() {
   eventSource = new EventSource("/alerts_stream");
   eventSource.onmessage = (e) => {
     const alert = JSON.parse(e.data.replace(/'/g,'"'));
-    allAlerts.unshift(alert);
+    const key = makeAlertKey(alert);
+    const existing = allAlerts.find(a => a.key === key);
+
+    if(existing){
+      existing.count++;
+      existing.time = alert.time; // update last seen
+    } else {
+      alert.key = key;
+      alert.count = 1;
+      allAlerts.unshift(alert);
+    }
+
     // reset to first page on new alert
     currentPage = 1;
     renderAlerts();
-    showNotification(`New Alert: ${alert.message}`, "warning");
+
+    bufferNotification(alert);
   };
 }
 startStream();
@@ -196,5 +258,6 @@ document.getElementById("rowsPerPage").addEventListener("change", (e)=>{
   renderAlerts();
 });
 </script>
+
 </body>
 </html>
