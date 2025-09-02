@@ -14,5 +14,5 @@ test
 # Ignore environment files
 .env
 
-#Ignore text files
+# Ignore text files
 *.txt
