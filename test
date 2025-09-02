@@ -1,5 +1,0 @@
-import pyshark
-
-cap = pyshark.LiveCapture(interface='Ethernet 3')  # replace with exact name
-pkt = next(cap.sniff_continuously(packet_count=1))
-print(pkt)
