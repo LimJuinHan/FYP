@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NIDS Dashboard - Alerts</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-100 font-sans">
+
+<!-- Navigation -->
+<nav class="bg-blue-600 text-white p-4 flex justify-between items-center">
+  <div class="text-xl font-bold">NIDS Dashboard</div>
+  <div class="space-x-4 flex items-center relative">
+
+    <a href="home.html" class="hover:underline">Home</a>
+    <a href="dashboard.html" class="hover:underline">Dashboard</a>
+    <a href="alerts.html" class="hover:underline">Alerts</a>
+
+    <!-- Dropdown wrapper -->
+    <div class="relative group">
+      <a href="#" class="hover:underline">Raw PCAP</a>
+
+      <div class="absolute left-0 mt-1 w-40 bg-white text-black rounded shadow-lg opacity-0 group-hover:opacity-100 invisible group-hover:visible transition-opacity duration-300">
+        <a href="raw_pcap.html" class="block px-4 py-2 hover:bg-blue-100">View Raw PCAP</a>
+        <a href="view_raw_pcap.html" class="block px-4 py-2 hover:bg-blue-100">View PCAP Files</a>
+      </div>
+    </div>
+
+    <a href="reports.html" class="hover:underline">Reports</a>
+  </div>
+</nav>
+
+
+<div class="p-6 max-w-7xl mx-auto space-y-6">
+
+  <!-- Controls -->
+  <div class="flex items-center justify-between mb-4 space-x-4">
+    <div>
+      <button id="refreshAlerts" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Refresh Alerts</button>
+      <button id="clearAlerts" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">Clear Alerts</button>
+    </div>
+    <div class="flex items-center space-x-2">
+      <label for="dateFilter" class="text-gray-700">Select Date:</label>
+      <input type="date" id="dateFilter" class="border rounded px-2 py-1" value="">
+      <label for="severityFilter" class="text-gray-700">Severity:</label>
+      <select id="severityFilter" class="border rounded px-2 py-1">
+        <option value="all">All</option>
+        <option value="High">High</option>
+        <option value="Medium">Medium</option>
+        <option value="Low">Low</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Alerts Table -->
+  <div class="overflow-x-auto bg-white rounded-lg shadow">
+    <table class="min-w-full">
+      <thead class="bg-gray-200">
+        <tr>
+          <th class="py-2 px-4 text-left">Time</th>
+          <th class="py-2 px-4 text-left">Source</th>
+          <th class="py-2 px-4 text-left">Destination</th>
+          <th class="py-2 px-4 text-left">Severity</th>
+          <th class="py-2 px-4 text-left">Message</th>
+        </tr>
+      </thead>
+      <tbody id="alertsTable"></tbody>
+    </table>
+  </div>
+
+  <!-- Pagination Controls -->
+  <div class="flex justify-between items-center mt-2">
+    <div>
+      <button id="prevPage" class="bg-gray-300 px-3 py-1 rounded hover:bg-gray-400">Previous</button>
+      <button id="nextPage" class="bg-gray-300 px-3 py-1 rounded hover:bg-gray-400">Next</button>
+    </div>
+    <div>
+      <span id="pageInfo"></span>
+    </div>
+    <div>
+      <label for="rowsPerPage">Rows per page:</label>
+      <select id="rowsPerPage" class="border rounded px-2 py-1">
+        <option value="10">10</option>
+        <option value="25" selected>25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Charts Section -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+    <div class="bg-white p-4 rounded-lg shadow">
+      <h2 class="text-lg font-bold mb-4">Alerts by Source IP</h2>
+      <canvas id="barChart" height="200"></canvas>
+    </div>
+    <div class="bg-white p-4 rounded-lg shadow">
+      <h2 class="text-lg font-bold mb-4">Alert Distribution by Severity</h2>
+      <canvas id="pieChart" height="200"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- Notification container -->
+<div id="notification-container" class="fixed top-16 right-4 space-y-2 z-50"></div>
+
+<script>
+let allAlerts = [];
+let currentPage = 1;
+let rowsPerPage = parseInt(document.getElementById("rowsPerPage").value);
+
+const alertsTable = document.getElementById("alertsTable");
+const severityFilter = document.getElementById("severityFilter");
+const dateFilter = document.getElementById("dateFilter");
+
+// Default date = today
+const today = new Date();
+dateFilter.value = today.toISOString().split('T')[0];
+
+// ---------------- Notification system ----------------
+function showNotification(message, type="info", duration=3000){
+    const container = document.getElementById("notification-container");
+    const colors = { info:"bg-blue-500", success:"bg-green-500", warning:"bg-yellow-500", error:"bg-red-500" };
+    const notification = document.createElement("div");
+    notification.className = `text-white ${colors[type]} px-4 py-2 rounded shadow-lg animate-slide-in`;
+    notification.textContent = message;
+    container.appendChild(notification);
+    setTimeout(()=>{notification.classList.add("opacity-0"); setTimeout(()=>container.removeChild(notification),500)},duration);
+}
+
+// Slide-in animation
+const style = document.createElement("style");
+style.textContent = `
+@keyframes slide-in {0%{transform:translateX(100%);opacity:0}100%{transform:translateX(0);opacity:1}}
+.animate-slide-in {animation: slide-in 0.5s ease forwards;}
+`;
+document.head.appendChild(style);
+
+// ---------------- Rendering ----------------
+function renderAlerts() {
+    alertsTable.innerHTML = "";
+
+    let filtered = allAlerts;
+
+    const severity = severityFilter.value;
+    if(severity !== "all") {
+        filtered = filtered.filter(a => a.severity === severity);
+    }
+
+    // Count alerts per source
+    const sourceCounts = {};
+    filtered.forEach(a => {
+        sourceCounts[a.src] = (sourceCounts[a.src] || 0) + 1;
+    });
+
+    // Sort by count descending
+    filtered.sort((a, b) => (sourceCounts[b.src] || 0) - (sourceCounts[a.src] || 0));
+
+    // Limit to top 10
+    const topAlerts = filtered.slice(0, 10);
+
+    topAlerts.forEach(alert => {
+        const row = document.createElement("tr");
+        const colorClass = alert.severity === "High" ? "bg-red-100" :
+                           alert.severity === "Medium" ? "bg-yellow-100" : "bg-green-100";
+        row.className = colorClass + " border-b";
+        row.innerHTML = `
+            <td class="py-1 px-2">${alert.time}</td>
+            <td class="py-1 px-2">${alert.src}</td>
+            <td class="py-1 px-2">${alert.dst}</td>
+            <td class="py-1 px-2 font-bold">${alert.severity}</td>
+            <td class="py-1 px-2">${alert.message}</td>
+        `;
+        alertsTable.appendChild(row);
+    });
+
+    document.getElementById("pageInfo").textContent = `Showing top ${topAlerts.length} alerts`;
+}
+
+// ---------------- Charts ----------------
+let barChart=null, pieChart=null;
+function renderCharts(){
+    const sourceCounts = {};
+    const severityCounts = {High:0, Medium:0, Low:0};
+    allAlerts.forEach(a=>{
+        sourceCounts[a.src] = (sourceCounts[a.src]||0)+1;
+        if(severityCounts[a.severity]!==undefined) severityCounts[a.severity]++;
+    });
+
+    // Bar chart: source
+    const barCtx = document.getElementById("barChart").getContext("2d");
+    if(barChart) barChart.destroy();
+    barChart = new Chart(barCtx, {
+        type: "bar",
+        data: {
+            labels: Object.keys(sourceCounts),
+            datasets: [{label:"Alert Count", data:Object.values(sourceCounts), backgroundColor:"rgba(59,130,246,0.7)", borderColor:"rgba(59,130,246,1)", borderWidth:1}]
+        },
+        options: { responsive:true, scales:{y:{beginAtZero:true}} }
+    });
+
+    // Pie chart: severity
+    const pieCtx = document.getElementById("pieChart").getContext("2d");
+    if(pieChart) pieChart.destroy();
+    pieChart = new Chart(pieCtx, {
+        type:"pie",
+        data:{
+            labels:Object.keys(severityCounts),
+            datasets:[{data:Object.values(severityCounts), backgroundColor:['#EF4444','#F59E0B','#10B981'] }]
+        },
+        options:{responsive:true}
+    });
+}
+
+// ---------------- Fetch Alerts ----------------
+async function loadAlerts(){
+    try{
+        const date = dateFilter.value.replace(/-/g,'');
+        const response = await fetch(`/get_alerts?date=${date}`);
+        if(!response.ok) throw new Error("Failed to fetch alerts");
+        allAlerts = await response.json();
+        currentPage = 1;
+        renderAlerts();
+        renderCharts();
+        showNotification(`Loaded ${allAlerts.length} alerts`,"success");
+    }catch(e){
+        showNotification(e.message,"error");
+    }
+}
+
+// ---------------- Event Listeners ----------------
+document.getElementById("refreshAlerts").addEventListener("click", loadAlerts);
+document.getElementById("clearAlerts").addEventListener("click", ()=>{
+    allAlerts=[];
+    renderAlerts();
+    renderCharts();
+    showNotification("Alerts cleared","info");
+});
+severityFilter.addEventListener("change",()=>{currentPage=1; renderAlerts();});
+dateFilter.addEventListener("change", loadAlerts);
+document.getElementById("prevPage").addEventListener("click", ()=>{
+    if(currentPage>1){ currentPage--; renderAlerts(); }
+});
+document.getElementById("nextPage").addEventListener("click", ()=>{
+    const totalPages = Math.ceil((severityFilter.value==="all"?allAlerts.length:allAlerts.filter(a=>a.severity===severityFilter.value).length)/rowsPerPage);
+    if(currentPage<totalPages){ currentPage++; renderAlerts(); }
+});
+document.getElementById("rowsPerPage").addEventListener("change", e=>{
+    rowsPerPage=parseInt(e.target.value);
+    currentPage=1;
+    renderAlerts();
+});
+
+// Initial load
+loadAlerts();
+
+</script>
+</body>
+</html>

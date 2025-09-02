@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raw PCAP</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 font-sans">
+
+<!-- Navigation -->
+<nav class="bg-blue-600 text-white p-4 flex justify-between items-center">
+  <div class="text-xl font-bold">NIDS Dashboard</div>
+  <div class="space-x-4 flex items-center relative">
+
+    <a href="home.html" class="hover:underline">Home</a>
+    <a href="dashboard.html" class="hover:underline">Dashboard</a>
+    <a href="alerts.html" class="hover:underline">Alerts</a>
+
+    <!-- Dropdown wrapper -->
+    <div class="relative group">
+      <a href="#" class="hover:underline">Raw PCAP</a>
+
+      <div class="absolute left-0 mt-1 w-40 bg-white text-black rounded shadow-lg opacity-0 group-hover:opacity-100 invisible group-hover:visible transition-opacity duration-300">
+        <a href="raw_pcap.html" class="block px-4 py-2 hover:bg-blue-100">View Raw PCAP</a>
+        <a href="view_raw_pcap.html" class="block px-4 py-2 hover:bg-blue-100">View PCAP Files</a>
+      </div>
+    </div>
+
+    <a href="reports.html" class="hover:underline">Reports</a>
+  </div>
+</nav>
+
+<div class="p-6 max-w-7xl mx-auto">
+  <!-- Interfaces chosen display -->
+  <div class="flex justify-end mb-2">
+    <span id="chosenInterfaces" class="text-gray-600 italic"></span>
+  </div>
+
+  <h1 class="text-2xl font-bold mb-4">Live Packet Capture</h1>
+
+  <!-- Interface selection -->
+  <button id="openModal" class="bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600 mb-4">
+    Select Network Interfaces
+  </button>
+
+  <div class="mb-4 flex space-x-2">
+    <button id="refreshBtn" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Refresh Now</button>
+    <button id="stopCaptureBtn" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">Stop Capture</button>
+  </div>
+
+  <!-- Table -->
+  <div class="overflow-x-auto">
+    <table class="min-w-full bg-white rounded-lg shadow">
+      <thead class="bg-gray-200">
+        <tr>
+          <th class="py-2 px-4 text-left">Time</th>
+          <th class="py-2 px-4 text-left">Source</th>
+          <th class="py-2 px-4 text-left">Destination</th>
+          <th class="py-2 px-4 text-left">Protocol</th>
+          <th class="py-2 px-4 text-left">Length</th>
+          <th class="py-2 px-4 text-left">Info</th>
+        </tr>
+      </thead>
+      <tbody id="packetTable"></tbody>
+    </table>
+  </div>
+
+  <!-- Pagination + Rows per page -->
+  <div class="flex justify-between items-center mt-3">
+    <div>
+      <label for="rowsPerPage" class="mr-2 text-gray-700">Rows per page:</label>
+      <select id="rowsPerPage" class="border rounded px-2 py-1">
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+        <option value="200">200</option>
+      </select>
+    </div>
+    <div class="flex items-center space-x-2">
+      <button id="prevPage" class="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400">Prev</button>
+      <span id="pageInfo" class="text-gray-700">Page 1</span>
+      <button id="nextPage" class="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400">Next</button>
+    </div>
+  </div>
+</div>
+
+<!-- Interface selection modal -->
+<div class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center hidden" id="interfaceModal">
+  <div class="bg-white rounded-lg p-6 w-96">
+    <h2 class="text-lg font-bold mb-4">Select Interfaces to Monitor</h2>
+    <div id="interfaceList" class="mb-4 max-h-48 overflow-y-auto"></div>
+    <div class="flex justify-end space-x-2">
+      <button id="closeModal" class="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">Cancel</button>
+      <button id="saveInterfaces" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Save & Start Capture</button>
+    </div>
+  </div>
+</div>
+
+<!-- Notification container -->
+<div id="notification-container" class="fixed top-16 right-4 space-y-2 z-50"></div>
+
+<script>
+// ---------------- Notification system ----------------
+function showNotification(message, type="info", duration=3000) {
+  const container = document.getElementById("notification-container");
+  const colors = { info:"bg-blue-500", success:"bg-green-500", warning:"bg-yellow-500", error:"bg-red-500" };
+  const notification = document.createElement("div");
+  notification.className = `text-white ${colors[type]} px-4 py-2 rounded shadow-lg animate-slide-in`;
+  notification.textContent = message;
+  container.appendChild(notification);
+  setTimeout(()=>{notification.classList.add("opacity-0"); setTimeout(()=>container.removeChild(notification),500)},duration);
+}
+
+// Slide-in animation
+const style = document.createElement("style");
+style.textContent = `
+@keyframes slide-in {0% { transform: translateX(100%); opacity: 0; } 100% { transform: translateX(0); opacity: 1; }}
+.animate-slide-in { animation: slide-in 0.5s ease forwards; }
+`;
+document.head.appendChild(style);
+
+// ---------------- Interface selection logic ----------------
+const interfaceModal = document.getElementById("interfaceModal");
+const interfaceList = document.getElementById("interfaceList");
+const openModalBtn = document.getElementById("openModal");
+const closeModalBtn = document.getElementById("closeModal");
+const saveInterfacesBtn = document.getElementById("saveInterfaces");
+
+let selectedInterfaces = [];
+let eventSource = null;
+let allPackets = [];
+let currentPage = 1;
+let rowsPerPage = 50;
+
+const packetTable = document.getElementById("packetTable");
+
+// Open modal & fetch interfaces
+openModalBtn.addEventListener("click", async () => {
+  interfaceModal.classList.remove("hidden");
+  interfaceList.innerHTML = "";
+  try {
+    const res = await fetch("/interfaces");
+    const data = await res.json();
+    data.interfaces.forEach(iface=>{
+      const div = document.createElement("div");
+      div.innerHTML = `<input type="checkbox" class="mr-2" value="${iface}" id="iface-${iface}">
+                       <label for="iface-${iface}">${iface}</label>`;
+      interfaceList.appendChild(div);
+    });
+  } catch(err){
+    showNotification("Failed to fetch interfaces: "+err,"error");
+  }
+});
+
+// Close modal
+closeModalBtn.addEventListener("click",()=>interfaceModal.classList.add("hidden"));
+
+// Save interfaces & start capture
+saveInterfacesBtn.addEventListener("click", async ()=>{
+  const selected = [...document.querySelectorAll("#interfaceList input:checked")].map(el=>el.value);
+  if (selected.length === 0) {
+    showNotification("Please select at least one interface","warning");
+    return;
+  }
+  selectedInterfaces = selected;
+  document.getElementById("chosenInterfaces").textContent = "Monitoring: " + selectedInterfaces.join(", ");
+
+  try {
+    await fetch("/save_interfaces", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        interfaces:selected,
+        type: "capture"
+      })
+    });
+
+    const res = await fetch("/start_capture", {method:"POST"});
+    const data = await res.json();
+    if (data.status.includes("started")) {
+      showNotification("Capture started","success");
+      interfaceModal.classList.add("hidden");
+      allPackets = [];
+      currentPage = 1;
+      startStream();
+    } else {
+      showNotification(data.message,"error");
+    }
+  } catch(err){
+    showNotification("Error: "+err,"error");
+  }
+});
+
+// Render table with pagination
+function renderTable() {
+  packetTable.innerHTML = "";
+  const start = (currentPage - 1) * rowsPerPage;
+  const end = start + rowsPerPage;
+  const pageData = allPackets.slice(start, end);
+
+  pageData.forEach(pkt => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td class="py-1 px-2">${pkt.time}</td>
+      <td class="py-1 px-2">${pkt.src}</td>
+      <td class="py-1 px-2">${pkt.dst}</td>
+      <td class="py-1 px-2">${pkt.protocol}</td>
+      <td class="py-1 px-2">${pkt.length}</td>
+      <td class="py-1 px-2">${pkt.info}</td>`;
+    packetTable.appendChild(row);
+  });
+
+  document.getElementById("pageInfo").textContent =
+    `Page ${currentPage} of ${Math.max(1, Math.ceil(allPackets.length / rowsPerPage))}`;
+}
+
+function startStream(){
+  if(eventSource) eventSource.close();
+  eventSource = new EventSource("/packets");
+  eventSource.onmessage = (e)=>{
+    try {
+      const pkt = JSON.parse(e.data); // remove replace()
+      allPackets.unshift(pkt);
+      renderTable();
+    } catch(err){
+      console.error("Error parsing packet:", err, e.data);
+    }
+  };
+}
+
+// Stop capture
+document.getElementById("stopCaptureBtn").addEventListener("click", async ()=>{
+  await fetch("/stop_capture", {method:"POST"});
+  if(eventSource) eventSource.close();
+  showNotification("Capture stopped","info");
+});
+
+// Pagination buttons
+document.getElementById("prevPage").addEventListener("click", () => {
+  if(currentPage > 1){ currentPage--; renderTable(); }
+});
+document.getElementById("nextPage").addEventListener("click", () => {
+  if(currentPage < Math.ceil(allPackets.length / rowsPerPage)){
+    currentPage++; renderTable();
+  }
+});
+
+// Rows per page selector
+document.getElementById("rowsPerPage").addEventListener("change", (e)=>{
+  rowsPerPage = parseInt(e.target.value);
+  currentPage = 1;
+  renderTable();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NIDS Home</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 font-sans">
+
+<!-- Navigation -->
+<nav class="bg-blue-600 text-white p-4 flex justify-between items-center">
+  <div class="text-xl font-bold">NIDS Dashboard</div>
+  <div class="space-x-4 flex items-center relative">
+
+    <a href="home.html" class="hover:underline">Home</a>
+    <a href="dashboard.html" class="hover:underline">Dashboard</a>
+    <a href="alerts.html" class="hover:underline">Alerts</a>
+
+    <!-- Dropdown wrapper -->
+    <div class="relative group">
+      <a href="#" class="hover:underline">Raw PCAP</a>
+
+      <div class="absolute left-0 mt-1 w-40 bg-white text-black rounded shadow-lg opacity-0 group-hover:opacity-100 invisible group-hover:visible transition-opacity duration-300">
+        <a href="raw_pcap.html" class="block px-4 py-2 hover:bg-blue-100">View Raw PCAP</a>
+        <a href="view_raw_pcap.html" class="block px-4 py-2 hover:bg-blue-100">View PCAP Files</a>
+      </div>
+    </div>
+
+    <a href="reports.html" class="hover:underline">Reports</a>
+  </div>
+</nav>
+
+<!-- Fixed top-right selected interfaces display -->
+<div id="selected-interfaces-display" class="fixed top-16 right-4 p-3 w text-sm text-gray-700">
+  <span id="selected-ifaces-text" class="italic">None</span>
+</div>
+
+<!-- Main Content -->
+<div class="flex flex-col items-center justify-center mt-16 space-y-8">
+  <div class="bg-white p-6 rounded-lg shadow w-full max-w-md">
+    <h2 class="text-xl font-bold mb-4">Network Simulation</h2>
+    <p class="mb-4">Select network interfaces to monitor and control simulation first.</p>
+
+    <!-- Interface selection -->
+    <button id="openModal" class="w-full bg-gray-500 text-white py-2 px-4 rounded hover:bg-gray-600 mb-2">
+      Select Network Interfaces
+    </button>
+
+    <!-- IDS -->
+    <button id="startIds" class="w-full bg-purple-600 text-white py-2 px-4 rounded hover:bg-purple-700 mb-2">
+      Start IDS
+    </button>
+
+    <!-- Network Simulation -->
+    <button id="startSimulation" class="w-full bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 mb-2">
+      Start Network Simulation
+    </button>
+    <button id="stopSimulation" class="w-full bg-red-600 text-white py-2 px-4 rounded hover:bg-red-700 mb-2">
+      Stop Network Simulation
+    </button>
+  </div>
+</div>
+
+
+<!-- Interface selection modal -->
+<div class="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center hidden" id="interfaceModal">
+  <div class="bg-white rounded-lg p-6 w-96">
+    <h2 class="text-lg font-bold mb-4">Select Interfaces to Monitor</h2>
+    <div id="interfaceList" class="mb-4 max-h-48 overflow-y-auto"></div>
+    <div class="flex justify-end space-x-2">
+      <button id="closeModal" class="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">Cancel</button>
+      <button id="saveInterfaces" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Notification container -->
+<div id="notification-container" class="fixed top-32 right-4 space-y-2 z-50"></div>
+
+<script>
+let selectedInterfaces = [];
+
+// Notification system
+function showNotification(message, type="info", duration=3000) {
+  const container = document.getElementById("notification-container");
+  const colors = {
+    info: "bg-blue-500",
+    success: "bg-green-500",
+    warning: "bg-yellow-500",
+    error: "bg-red-500"
+  };
+  const notification = document.createElement("div");
+  notification.className = `text-white ${colors[type]} px-4 py-2 rounded shadow-lg animate-slide-in`;
+  notification.textContent = message;
+  container.appendChild(notification);
+
+  setTimeout(() => {
+    notification.classList.add("opacity-0");
+    setTimeout(() => container.removeChild(notification), 500);
+  }, duration);
+}
+
+// Slide-in animation
+const style = document.createElement("style");
+style.textContent = `
+@keyframes slide-in {
+  0% { transform: translateX(100%); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+.animate-slide-in { animation: slide-in 0.5s ease forwards; }
+`;
+document.head.appendChild(style);
+
+// Modal logic
+const interfaceModal = document.getElementById("interfaceModal");
+const interfaceList = document.getElementById("interfaceList");
+const openModalBtn = document.getElementById("openModal");
+const closeModalBtn = document.getElementById("closeModal");
+const saveInterfacesBtn = document.getElementById("saveInterfaces");
+
+// Open modal & fetch interfaces
+openModalBtn.addEventListener("click", async () => {
+  interfaceModal.classList.remove("hidden");
+  interfaceList.innerHTML = "";
+  try {
+    const res = await fetch("/interfaces");
+    const data = await res.json();
+    data.interfaces.forEach(iface => {
+      const div = document.createElement("div");
+      div.innerHTML = `<input type="checkbox" class="mr-2" value="${iface}" id="iface-${iface}">
+                       <label for="iface-${iface}">${iface}</label>`;
+      interfaceList.appendChild(div);
+    });
+  } catch(err){
+    showNotification("Failed to fetch interfaces: "+err, "error");
+  }
+});
+
+// Close modal
+closeModalBtn.addEventListener("click", () => interfaceModal.classList.add("hidden"));
+
+// Save selected interfaces
+saveInterfacesBtn.addEventListener("click", async ()=>{
+  selectedInterfaces = Array.from(interfaceList.querySelectorAll("input[type=checkbox]"))
+    .filter(cb => cb.checked)
+    .map(cb => cb.value);
+
+  if(selectedInterfaces.length===0){
+    showNotification("Select at least one interface","warning");
+    return;
+  }
+
+  try{
+    await fetch("/save_interfaces", {
+      method:"POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        interfaces:selectedInterfaces,
+        type: "ids"
+      })
+    });
+    document.getElementById("selected-ifaces-text").textContent =
+    "Monitoring: " + selectedInterfaces.join(", ");
+    showNotification("Interfaces saved: "+selectedInterfaces.join(", "), "success");
+    interfaceModal.classList.add("hidden");
+  } catch(err){
+    showNotification("Failed to save interfaces: "+err,"error");
+  }
+});
+
+// Start IDS
+document.getElementById("startIds").addEventListener("click", async () => {
+  if(selectedInterfaces.length === 0){
+    showNotification("Select interfaces before starting IDS","warning");
+    return;
+  }
+  showNotification("Starting IDS...", "info", 4000);
+  try {
+    const response = await fetch("/start_ids", { method: "POST" });
+    const data = await response.json();
+    if(data.status === "IDS started") {
+      showNotification("IDS started successfully", "success", 4000);
+    } else {
+      showNotification("Failed to start IDS: "+(data.message||"Unknown error"), "warning", 5000);
+    }
+  } catch(err) {
+    showNotification("Error contacting backend: "+err, "error", 5000);
+  }
+});
+
+// Start simulation
+document.getElementById("startSimulation").addEventListener("click", async () => {
+  if(selectedInterfaces.length === 0){
+    showNotification("Select at least one interface before starting", "warning");
+    return;
+  }
+  showNotification("Starting simulation...", "info", 5000);
+  try {
+    const response = await fetch("/start_gns3", { method: "POST" });
+    const data = await response.json();
+    if(data.status === "Simulation started") {
+      showNotification("Simulation started!", "success", 4000);
+    } else {
+      showNotification("Simulation failed: "+(data.message||"Unknown error"), "warning", 5000);
+    }
+  } catch(err) {
+    showNotification("Error contacting backend: "+err, "error", 5000);
+  }
+});
+
+// Stop simulation
+document.getElementById("stopSimulation").addEventListener("click", async () => {
+  showNotification("Stopping simulation...", "info", 3000);
+  try {
+    const response = await fetch("/stop_gns3", { method: "POST" });
+    const data = await response.json();
+    if(data.status === "Simulation stopped") {
+      showNotification("Simulation stopped successfully", "success", 3000);
+    } else {
+      showNotification("Failed to stop simulation: "+(data.message||"Unknown error"), "warning", 5000);
+    }
+  } catch(err) {
+    showNotification("Error contacting backend: "+err, "error", 5000);
+  }
+});
+</script>
+</body>
+</html>

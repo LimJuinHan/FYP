@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NIDS Alerts</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 font-sans">
+
+<!-- Navigation -->
+<nav class="bg-blue-600 text-white p-4 flex justify-between items-center">
+  <div class="text-xl font-bold">NIDS Dashboard</div>
+  <div class="space-x-4 flex items-center relative">
+
+    <a href="home.html" class="hover:underline">Home</a>
+    <a href="dashboard.html" class="hover:underline">Dashboard</a>
+    <a href="alerts.html" class="hover:underline">Alerts</a>
+
+    <!-- Dropdown wrapper -->
+    <div class="relative group">
+      <a href="#" class="hover:underline">Raw PCAP</a>
+
+      <div class="absolute left-0 mt-1 w-40 bg-white text-black rounded shadow-lg opacity-0 group-hover:opacity-100 invisible group-hover:visible transition-opacity duration-300">
+        <a href="raw_pcap.html" class="block px-4 py-2 hover:bg-blue-100">View Raw PCAP</a>
+        <a href="view_raw_pcap.html" class="block px-4 py-2 hover:bg-blue-100">View PCAP Files</a>
+      </div>
+    </div>
+
+    <a href="reports.html" class="hover:underline">Reports</a>
+  </div>
+</nav>
+
+<div class="p-6 max-w-7xl mx-auto">
+  <h1 class="text-2xl font-bold mb-4">Security Alerts</h1>
+
+  <!-- Controls -->
+  <div class="flex items-center justify-between mb-4">
+    <div>
+      <button id="clearAlerts" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">
+        Clear Alerts
+      </button>
+    </div>
+    <div class="flex items-center space-x-2">
+      <label for="severityFilter" class="text-gray-700">Filter by Severity:</label>
+      <select id="severityFilter" class="border rounded px-2 py-1">
+        <option value="all">All</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Alerts Table -->
+  <div class="overflow-x-auto">
+    <table class="min-w-full bg-white rounded-lg shadow">
+      <thead class="bg-gray-200">
+        <tr>
+          <th class="py-2 px-4 text-left">Time</th>
+          <th class="py-2 px-4 text-left">Source</th>
+          <th class="py-2 px-4 text-left">Destination</th>
+          <th class="py-2 px-4 text-left">Severity</th>
+          <th class="py-2 px-4 text-left">Message</th>
+        </tr>
+      </thead>
+      <tbody id="alertsTable"></tbody>
+    </table>
+  </div>
+
+  <!-- Pagination controls -->
+  <div class="flex justify-between items-center mt-2">
+    <button id="prevPage" class="px-2 py-1 bg-gray-300 rounded hover:bg-gray-400">Prev</button>
+    <span id="pageInfo"></span>
+    <button id="nextPage" class="px-2 py-1 bg-gray-300 rounded hover:bg-gray-400">Next</button>
+    <label>
+      Rows per page:
+      <select id="rowsPerPage" class="border rounded px-2 py-1">
+        <option value="10">10</option>
+        <option value="25" selected>25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+      </select>
+    </label>
+  </div>
+</div>
+
+<!-- Notification container -->
+<div id="notification-container" class="fixed top-16 right-4 space-y-2 z-50"></div>
+
+<script>
+// ---------------- Notification system ----------------
+function showNotification(message, type="info", duration=3000) {
+  const container = document.getElementById("notification-container");
+  const colors = { info:"bg-blue-500", success:"bg-green-500", warning:"bg-yellow-500", error:"bg-red-500" };
+  const notification = document.createElement("div");
+  notification.className = `text-white ${colors[type]} px-4 py-2 rounded shadow-lg animate-slide-in`;
+  notification.textContent = message;
+  container.appendChild(notification);
+  setTimeout(()=>{
+    notification.classList.add("opacity-0");
+    setTimeout(()=>container.removeChild(notification), 500);
+  }, duration);
+}
+
+// Slide-in animation
+const style = document.createElement("style");
+style.textContent = `
+@keyframes slide-in {0% { transform: translateX(100%); opacity: 0; } 100% { transform: translateX(0); opacity: 1; }}
+.animate-slide-in { animation: slide-in 0.5s ease forwards; }
+`;
+document.head.appendChild(style);
+
+// ---------------- Alerts logic ----------------
+let eventSource = null;
+let allAlerts = [];
+let currentPage = 1;
+let rowsPerPage = 25;
+
+const alertsTable = document.getElementById("alertsTable");
+const severityFilter = document.getElementById("severityFilter");
+
+// Render alerts with pagination
+function renderAlerts() {
+  alertsTable.innerHTML = "";
+  let filtered = allAlerts;
+  const filter = severityFilter.value;
+  if(filter !== "all") filtered = allAlerts.filter(a => a.severity.toLowerCase() === filter);
+
+  const start = (currentPage - 1) * rowsPerPage;
+  const end = start + rowsPerPage;
+  const pageData = filtered.slice(start, end);
+
+  pageData.forEach(alert => {
+    const row = document.createElement("tr");
+    const colorClass = alert.severity === "High" ? "bg-red-100" :
+                       alert.severity === "Medium" ? "bg-yellow-100" : "bg-green-100";
+    row.className = colorClass + " border-b";
+    row.innerHTML = `
+      <td class="py-1 px-2">${alert.time}</td>
+      <td class="py-1 px-2">${alert.src}</td>
+      <td class="py-1 px-2">${alert.dst}</td>
+      <td class="py-1 px-2 font-bold">${alert.severity}</td>
+      <td class="py-1 px-2">${alert.message}</td>
+    `;
+    alertsTable.appendChild(row);
+  });
+
+  document.getElementById("pageInfo").textContent =
+    `Page ${currentPage} of ${Math.max(1, Math.ceil(filtered.length / rowsPerPage))}`;
+}
+
+// ---------------- EventSource / SSE ----------------
+function startStream() {
+  if(eventSource) eventSource.close();
+  eventSource = new EventSource("/alerts_stream");
+  eventSource.onmessage = (e) => {
+    const alert = JSON.parse(e.data.replace(/'/g,'"'));
+    allAlerts.unshift(alert);
+    // reset to first page on new alert
+    currentPage = 1;
+    renderAlerts();
+    showNotification(`New Alert: ${alert.message}`, "warning");
+  };
+}
+startStream();
+
+// Filter dropdown
+severityFilter.addEventListener("change", () => {
+  currentPage = 1;
+  renderAlerts();
+});
+
+// Clear alerts
+document.getElementById("clearAlerts").addEventListener("click", ()=>{
+  allAlerts = [];
+  currentPage = 1;
+  renderAlerts();
+  showNotification("Alerts cleared", "info");
+});
+
+// Pagination buttons
+document.getElementById("prevPage").addEventListener("click", () => {
+  if(currentPage > 1){ currentPage--; renderAlerts(); }
+});
+document.getElementById("nextPage").addEventListener("click", () => {
+  const filtered = severityFilter.value === "all" ? allAlerts :
+                   allAlerts.filter(a => a.severity.toLowerCase() === severityFilter.value);
+  if(currentPage < Math.ceil(filtered.length / rowsPerPage)){ currentPage++; renderAlerts(); }
+});
+
+// Rows per page selector
+document.getElementById("rowsPerPage").addEventListener("change", (e)=>{
+  rowsPerPage = parseInt(e.target.value);
+  currentPage = 1;
+  renderAlerts();
+});
+</script>
+</body>
+</html>
